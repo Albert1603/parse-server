@@ -1768,4 +1768,158 @@ describe('Auth Adapter features', () => {
       expect(res.status).toBeLessThan(500);
     });
   });
+
+  describe('original object in afterSave on login with authData', () => {
+    const afterSaveRequests = () => {
+      const requests = [];
+      Parse.Cloud.afterSave(Parse.User, request => {
+        requests.push(request);
+      });
+      return requests;
+    };
+
+    it('provides the stored user as original object', async () => {
+      await reconfigureServer({ auth: { baseAdapter } });
+      const user = new Parse.User();
+      await user.save({ authData: { baseAdapter: { id: 'baseAdapter' } }, someField: 'someValue' });
+      const requests = afterSaveRequests();
+
+      const loggedInUser = await Parse.User.logInWith('baseAdapter', {
+        authData: { id: 'baseAdapter' },
+      });
+
+      expect(loggedInUser.id).toBe(user.id);
+      expect(loggedInUser.getSessionToken()).toBeDefined();
+      expect(loggedInUser.get('someField')).toBe('someValue');
+      expect(requests.length).toBe(1);
+      const { original, object } = requests[0];
+      expect(original).toBeDefined();
+      expect(original.id).toBe(user.id);
+      expect(original.get('someField')).toBe('someValue');
+      expect(original.get('authData')).toEqual({ baseAdapter: { id: 'baseAdapter' } });
+      expect(object.id).toBe(user.id);
+    });
+
+    it('provides the user as stored before authData is updated as original object', async () => {
+      const spy = spyOn(baseAdapter, 'validateAuthData').and.resolveTo({
+        save: { id: 'baseAdapter', token: 'token1' },
+      });
+      await reconfigureServer({ auth: { baseAdapter } });
+      const user = new Parse.User();
+      await user.save({ authData: { baseAdapter: { id: 'baseAdapter', token: 'token1' } } });
+      spy.and.resolveTo({ save: { id: 'baseAdapter', token: 'token2' } });
+      const requests = afterSaveRequests();
+
+      const loggedInUser = await Parse.User.logInWith('baseAdapter', {
+        authData: { id: 'baseAdapter', token: 'token2' },
+      });
+
+      expect(loggedInUser.id).toBe(user.id);
+      expect(loggedInUser.getSessionToken()).toBeDefined();
+      expect(requests.length).toBe(1);
+      expect(requests[0].original.get('authData')).toEqual({
+        baseAdapter: { id: 'baseAdapter', token: 'token1' },
+      });
+      await user.fetch({ useMasterKey: true });
+      expect(user.get('authData')).toEqual({ baseAdapter: { id: 'baseAdapter', token: 'token2' } });
+    });
+
+    it('provides the stored user as original object if the provider does not save authData', async () => {
+      const spy = spyOn(doNotSaveAdapter, 'validateAuthData').and.resolveTo({ doNotSave: false });
+      await reconfigureServer({ auth: { doNotSaveAdapter } });
+      const user = new Parse.User();
+      await user.save({ authData: { doNotSaveAdapter: { id: 'doNotSaveAdapter' } } });
+      spy.and.resolveTo({ doNotSave: true });
+      const requests = afterSaveRequests();
+
+      const loggedInUser = await Parse.User.logInWith('doNotSaveAdapter', {
+        authData: { id: 'doNotSaveAdapter', token: 'token' },
+      });
+
+      expect(loggedInUser.id).toBe(user.id);
+      expect(requests.length).toBe(1);
+      expect(requests[0].original.id).toBe(user.id);
+      expect(requests[0].original.get('authData')).toEqual({
+        doNotSaveAdapter: { id: 'doNotSaveAdapter' },
+      });
+    });
+
+    it('provides the original object with file URLs', async () => {
+      await reconfigureServer({ auth: { baseAdapter } });
+      const file = new Parse.File('file.txt', [1, 2, 3], 'text/plain');
+      await file.save();
+      const user = new Parse.User();
+      await user.save({ authData: { baseAdapter: { id: 'baseAdapter' } }, file });
+      const requests = afterSaveRequests();
+
+      await Parse.User.logInWith('baseAdapter', { authData: { id: 'baseAdapter' } });
+
+      expect(requests.length).toBe(1);
+      const { original } = requests[0];
+      expect(original.get('file').name()).toBe(file.name());
+      expect(original.get('file').url()).toBe(file.url());
+      expect(() => original.toJSON()).not.toThrow();
+    });
+
+    it('provides the stored user as original object to LiveQuery', async () => {
+      const parseServer = await reconfigureServer({
+        auth: { baseAdapter },
+        liveQuery: { classNames: ['_User'] },
+      });
+      const user = new Parse.User();
+      await user.save({ authData: { baseAdapter: { id: 'baseAdapter' } }, someField: 'someValue' });
+      const onAfterSave = new Promise(resolve => {
+        spyOn(parseServer.config.liveQueryController, 'onAfterSave').and.callFake(
+          (className, object, original) => resolve({ className, object, original })
+        );
+      });
+
+      await Parse.User.logInWith('baseAdapter', { authData: { id: 'baseAdapter' } });
+
+      const { className, object, original } = await onAfterSave;
+      expect(className).toBe('_User');
+      expect(object.id).toBe(user.id);
+      expect(original.id).toBe(user.id);
+      expect(original.get('someField')).toBe('someValue');
+    });
+
+    it('does not provide an original object on signup with authData', async () => {
+      await reconfigureServer({ auth: { baseAdapter } });
+      const requests = afterSaveRequests();
+
+      const user = await Parse.User.logInWith('baseAdapter', { authData: { id: 'baseAdapter' } });
+
+      expect(user.getSessionToken()).toBeDefined();
+      expect(requests.length).toBe(1);
+      expect(requests[0].object.id).toBe(user.id);
+      expect(requests[0].original).toBeUndefined();
+    });
+
+    it('provides the stored user as original object when linking authData', async () => {
+      await reconfigureServer({ auth: { baseAdapter } });
+      const user = await Parse.User.signUp('username', 'password');
+      const requests = afterSaveRequests();
+
+      await user.save({ authData: { baseAdapter: { id: 'baseAdapter' } } });
+
+      expect(requests.length).toBe(1);
+      expect(requests[0].original.id).toBe(user.id);
+      expect(requests[0].original.get('authData')).toBeUndefined();
+      expect(requests[0].object.get('authData')).toEqual({ baseAdapter: { id: 'baseAdapter' } });
+    });
+
+    it('does not run afterSave on login with invalid authData', async () => {
+      const spy = spyOn(baseAdapter, 'validateAuthData').and.resolveTo();
+      await reconfigureServer({ auth: { baseAdapter } });
+      const user = new Parse.User();
+      await user.save({ authData: { baseAdapter: { id: 'baseAdapter' } } });
+      spy.and.rejectWith(new Parse.Error(Parse.Error.OBJECT_NOT_FOUND, 'Invalid credentials'));
+      const requests = afterSaveRequests();
+
+      await expectAsync(
+        Parse.User.logInWith('baseAdapter', { authData: { id: 'baseAdapter' } })
+      ).toBeRejectedWith(new Parse.Error(Parse.Error.OBJECT_NOT_FOUND, 'Invalid credentials'));
+      expect(requests.length).toBe(0);
+    });
+  });
 });
