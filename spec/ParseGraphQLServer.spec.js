@@ -6617,6 +6617,121 @@ describe('ParseGraphQLServer', () => {
             ).toEqual(['someValue1', 'someValue2']);
           });
 
+          it('should support null values in where argument', async () => {
+            const target = new Parse.Object('SomeTargetClass');
+            target.set('someField', 'someValue');
+            await target.save();
+            const objectWithValue = new Parse.Object('SomeClass');
+            objectWithValue.set('someField', 'someValue');
+            objectWithValue.set('somePointerField', target);
+            const objectWithNull = new Parse.Object('SomeClass');
+            objectWithNull.set('someField', null);
+            const objectWithoutValue = new Parse.Object('SomeClass');
+            await Parse.Object.saveAll([objectWithValue, objectWithNull, objectWithoutValue]);
+
+            await parseGraphQLServer.parseGraphQLSchema.schemaCache.clear();
+
+            const find = async where => {
+              const result = await apolloClient.query({
+                query: gql`
+                  query FindSomeObjects($where: SomeClassWhereInput) {
+                    someClasses(where: $where) {
+                      edges {
+                        node {
+                          objectId
+                        }
+                      }
+                    }
+                  }
+                `,
+                variables: { where },
+              });
+              return result.data.someClasses.edges.map(({ node }) => node.objectId).sort();
+            };
+            const withValue = [objectWithValue.id];
+            const withoutValue = [objectWithNull.id, objectWithoutValue.id].sort();
+
+            expect(await find({ someField: { equalTo: null } })).toEqual(withoutValue);
+            expect(await find({ someField: { notEqualTo: null } })).toEqual(withValue);
+            expect(await find({ someField: null })).toEqual(withoutValue);
+            expect(await find({ AND: [{ someField: { equalTo: null } }] })).toEqual(withoutValue);
+            expect(await find({ id: { in: [objectWithValue.id, null] } })).toEqual(withValue);
+            expect(await find({ id: null })).toEqual([]);
+            expect(
+              await find({ somePointerField: { have: { someField: { notEqualTo: null } } } })
+            ).toEqual(withValue);
+          });
+
+          it_only_db('mongo')('should support null values in in constraint of where argument', async () => {
+            const objectWithValue = new Parse.Object('SomeClass');
+            objectWithValue.set('someField', 'someValue');
+            const objectWithNull = new Parse.Object('SomeClass');
+            objectWithNull.set('someField', null);
+            const objectWithoutValue = new Parse.Object('SomeClass');
+            await Parse.Object.saveAll([objectWithValue, objectWithNull, objectWithoutValue]);
+
+            await parseGraphQLServer.parseGraphQLSchema.schemaCache.clear();
+
+            const find = async where => {
+              const result = await apolloClient.query({
+                query: gql`
+                  query FindSomeObjects($where: SomeClassWhereInput) {
+                    someClasses(where: $where) {
+                      edges {
+                        node {
+                          objectId
+                        }
+                      }
+                    }
+                  }
+                `,
+                variables: { where },
+              });
+              return result.data.someClasses.edges.map(({ node }) => node.objectId).sort();
+            };
+            const withoutValue = [objectWithNull.id, objectWithoutValue.id].sort();
+
+            expect(await find({ someField: { in: [null] } })).toEqual(withoutValue);
+            expect(await find({ someField: { in: ['someValue', null] } })).toEqual(
+              [objectWithValue.id, ...withoutValue].sort()
+            );
+          });
+
+          it('should reject invalid null values in where argument with a Parse error', async () => {
+            const object = new Parse.Object('SomeClass');
+            object.set('someField', 'someValue');
+            await object.save();
+
+            await parseGraphQLServer.parseGraphQLSchema.schemaCache.clear();
+            loggerErrorSpy.calls.reset();
+
+            try {
+              await apolloClient.query({
+                query: gql`
+                  query FindSomeObjects($where: SomeClassWhereInput) {
+                    someClasses(where: $where) {
+                      edges {
+                        node {
+                          objectId
+                        }
+                      }
+                    }
+                  }
+                `,
+                variables: { where: { AND: null } },
+              });
+              fail('should fail');
+            } catch (e) {
+              expect(e.graphQLErrors[0].extensions.code).toEqual(Parse.Error.INVALID_QUERY);
+              expect(e.graphQLErrors[0].message).toEqual('Bad $and format - use an array value.');
+              expect(loggerErrorSpy).not.toHaveBeenCalledWith(
+                'Uncaught internal server error.',
+                jasmine.anything(),
+                jasmine.anything()
+              );
+            }
+          });
+
           it_id('accc59be-fd13-46c5-a103-ec63f2ad6670')(it)('should support full text search', async () => {
             try {
               const obj = new Parse.Object('FullTextSearchTest');
