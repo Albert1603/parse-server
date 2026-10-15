@@ -690,6 +690,9 @@ RestWrite.prototype.handleAuthData = async function (authData) {
       this.data.objectId = userResult.objectId;
 
       if (!this.query || !this.query.objectId) {
+        // Keep the stored user as the original object for afterSave and LiveQuery;
+        // the login has no query and the response is mutated below
+        this.storage.authDataLoginUser = structuredClone(userResult);
         this.response = {
           response: userResult,
           location: this.location(),
@@ -1715,6 +1718,12 @@ RestWrite.prototype.expandFilesForExistingObjects = async function () {
   if (this.response && this.response.response) {
     await this.config.filesController.expandFilesInObject(this.config, this.response.response);
   }
+  if (this.storage.authDataLoginUser) {
+    await this.config.filesController.expandFilesInObject(
+      this.config,
+      this.storage.authDataLoginUser
+    );
+  }
 };
 
 RestWrite.prototype.runDatabaseOperation = function () {
@@ -2057,6 +2066,11 @@ RestWrite.prototype.buildParseObjects = function () {
   let originalObject;
   if (this.query && this.query.objectId) {
     originalObject = triggers.inflate(extraData, this.originalData);
+  } else if (this.storage.authDataLoginUser) {
+    originalObject = triggers.inflate(
+      { className: this.className },
+      this.storage.authDataLoginUser
+    );
   }
 
   const className = Parse.Object.fromJSON(extraData);
