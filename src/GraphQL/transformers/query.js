@@ -53,7 +53,7 @@ const transformQueryConstraintInputToParse = (
 ) => {
   const fields = parseClasses[className].fields;
   if (parentFieldName === 'id' && className) {
-    Object.keys(constraints).forEach(constraintName => {
+    Object.keys(constraints || {}).forEach(constraintName => {
       const constraintValue = constraints[constraintName];
       if (typeof constraintValue === 'string') {
         const globalIdObject = fromGlobalId(constraintValue);
@@ -63,6 +63,9 @@ const transformQueryConstraintInputToParse = (
         }
       } else if (Array.isArray(constraintValue)) {
         constraints[constraintName] = constraintValue.map(value => {
+          if (typeof value !== 'string') {
+            return value;
+          }
           const globalIdObject = fromGlobalId(value);
 
           if (globalIdObject.type === className) {
@@ -76,11 +79,19 @@ const transformQueryConstraintInputToParse = (
     parentConstraints.objectId = constraints;
     delete parentConstraints.id;
   }
+  // Null values, e.g. `{ field: null }` or `{ field: { equalTo: null } }`, are passed to
+  // Parse Server as they are, so the query behaves like the equivalent REST query
+  if (constraints === null || constraints === undefined) {
+    return;
+  }
   Object.keys(constraints).forEach(fieldName => {
     let fieldValue = constraints[fieldName];
     if (parseConstraintMap[fieldName]) {
       constraints[parseConstraintMap[fieldName]] = constraints[fieldName];
       delete constraints[fieldName];
+    }
+    if (fieldValue === null || fieldValue === undefined) {
+      return;
     }
     /**
      * If we have a key-value pair, we need to change the way the constraint is structured.
@@ -249,9 +260,11 @@ const transformQueryInputToParse = (constraints, className, parseClasses) => {
       delete constraints[fieldName];
       fieldName = parseQueryMap[fieldName];
       constraints[fieldName] = fieldValue;
-      fieldValue.forEach(fieldValueItem => {
-        transformQueryInputToParse(fieldValueItem, className, parseClasses);
-      });
+      if (Array.isArray(fieldValue)) {
+        fieldValue.forEach(fieldValueItem => {
+          transformQueryInputToParse(fieldValueItem, className, parseClasses);
+        });
+      }
       return;
     } else {
       transformQueryConstraintInputToParse(
