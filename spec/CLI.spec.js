@@ -242,6 +242,8 @@ describe('execution', () => {
         done();
       });
       childProcess.kill();
+    } else {
+      done();
     }
   });
 
@@ -312,5 +314,67 @@ describe('execution', () => {
       { env }
     );
     await waitForStartup(childProcess, ['parse-server running on']);
+  });
+
+  // Parse Server handles termination signals only outside of tests, so the process runs without TESTING
+  async function startAndTerminate(args, signals) {
+    const env = { ...process.env };
+    env.NODE_OPTIONS = '--dns-result-order=ipv4first --trace-deprecation';
+    delete env.TESTING;
+    childProcess = spawn(binPath, args, { env });
+    let output = '';
+    childProcess.stdout.on('data', data => (output += data));
+    childProcess.stderr.on('data', data => (output += data));
+    await waitForStartup(childProcess, ['parse-server running on']);
+    const exit = new Promise(resolve => {
+      childProcess.once('exit', (code, signal) => resolve({ code, signal }));
+    });
+    const killTimeout = setTimeout(() => childProcess.kill('SIGKILL'), 5000);
+    signals.forEach(signal => childProcess.kill(signal));
+    const { code, signal } = await exit;
+    clearTimeout(killTimeout);
+    childProcess = undefined;
+    return { code, signal, output };
+  }
+
+  it('should shut down once on repeated termination signals', async () => {
+    // The OS can merge a pending signal with the same signal, but not with a different one
+    const { code, signal, output } = await startAndTerminate(
+      ['--appId', 'test', '--masterKey', 'test', '--databaseURI', databaseURI, '--port', '1342'],
+      ['SIGTERM', 'SIGINT']
+    );
+    expect(signal).toBeNull();
+    expect(code).toBe(0);
+    expect(output.match(/Shutting down\./g).length).toBe(1);
+    expect(output).toContain('Termination signal received. Shutdown already in progress.\n');
+    expect(output).not.toContain('Error while closing parse server');
+  });
+
+  const it_only_redis = process.env.PARSE_SERVER_TEST_CACHE === 'redis' ? it : xit;
+
+  it_only_redis('should exit after a termination signal with Redis cache and LiveQuery', async () => {
+    const { code, signal, output } = await startAndTerminate(
+      [
+        '--appId',
+        'test',
+        '--masterKey',
+        'test',
+        '--databaseURI',
+        databaseURI,
+        '--port',
+        '1343',
+        '--cacheAdapter',
+        JSON.stringify({
+          module: path.resolve(__dirname, '../lib/Adapters/Cache/RedisCacheAdapter'),
+          options: { url: 'redis://localhost:6379' },
+        }),
+        '--liveQuery',
+        JSON.stringify({ classNames: ['TestObject'], redisURL: 'redis://localhost:6379' }),
+      ],
+      ['SIGTERM', 'SIGINT']
+    );
+    expect(signal).toBeNull();
+    expect(code).toBe(0);
+    expect(output).not.toContain('error on shutdown');
   });
 });

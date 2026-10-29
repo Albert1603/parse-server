@@ -25,6 +25,10 @@ export class LiveQueryController {
     return this.liveQueryPublisher.connect();
   }
 
+  shutdown() {
+    return this.liveQueryPublisher.shutdown();
+  }
+
   onAfterSave(
     className: string,
     currentObject: any,

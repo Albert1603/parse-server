@@ -270,6 +270,7 @@ class ParseServer {
     if (cacheAdapter && typeof cacheAdapter.handleShutdown === 'function') {
       promises.push(cacheAdapter.handleShutdown());
     }
+    promises.push(this.config.liveQueryController.shutdown());
     if (this.liveQueryServer) {
       promises.push(this.liveQueryServer.shutdown());
     }
@@ -677,8 +678,16 @@ function injectDefaults(options: ParseServerOptions) {
 // Those can't be tested as it requires a subprocess
 /* istanbul ignore next */
 function configureListeners(parseServer) {
+  let shutdownStarted = false;
+  // A process can receive several termination signals, e.g. SIGTERM and then SIGINT, or SIGTERM
+  // more than once from a container orchestrator; the shutdown must run only once
   const handleShutdown = function () {
-    process.stdout.write('Termination signal received. Shutting down.');
+    if (shutdownStarted) {
+      process.stdout.write('Termination signal received. Shutdown already in progress.\n');
+      return;
+    }
+    shutdownStarted = true;
+    process.stdout.write('Termination signal received. Shutting down.\n');
     parseServer.handleShutdown();
   };
   process.on('SIGTERM', handleShutdown);

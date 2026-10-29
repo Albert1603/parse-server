@@ -31,7 +31,8 @@ export class RedisCacheAdapter {
   }
 
   async handleShutdown() {
-    if (!this.client) {
+    // Closing a client that is not open, e.g. never connected or already closed, throws
+    if (!this.client?.isOpen) {
       return;
     }
     try {

@@ -1,3 +1,5 @@
+const ParseServer = require('../lib/index').ParseServer;
+
 if (process.env.PARSE_SERVER_TEST_CACHE === 'redis') {
   describe('ParseLiveQuery redis', () => {
     afterEach(async () => {
@@ -53,6 +55,27 @@ if (process.env.PARSE_SERVER_TEST_CACHE === 'redis') {
       expect(server.liveQueryServer.subscriber.isOpen).toBe(true);
       await server.liveQueryServer.connect();
       expect(server.liveQueryServer.subscriber.isOpen).toBe(true);
+    });
+
+    it('closes the publisher on shutdown', async () => {
+      await reconfigureServer({ appId: 'test_app_id' });
+      const server = await ParseServer.startApp({
+        appId: 'redis_live_query_shutdown',
+        masterKey: 'world',
+        port: 1347,
+        mountPath: '/1',
+        serverURL: 'http://localhost:1347/1',
+        liveQuery: {
+          classNames: ['TestObject'],
+          redisURL: 'redis://localhost:6379',
+        },
+        verbose: false,
+        silent: true,
+      });
+      const publisher = server.config.liveQueryController.liveQueryPublisher.parsePublisher;
+      expect(publisher.isOpen).toBeTrue();
+      await server.handleShutdown();
+      expect(publisher.isOpen).toBeFalse();
     });
   });
 }

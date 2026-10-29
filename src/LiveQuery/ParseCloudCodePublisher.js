@@ -20,6 +20,18 @@ class ParseCloudCodePublisher {
     }
   }
 
+  async shutdown() {
+    // The in-memory publisher has no connection to close
+    if (typeof this.parsePublisher.close !== 'function' || !this.parsePublisher.isOpen) {
+      return;
+    }
+    try {
+      await this.parsePublisher.close();
+    } catch (error) {
+      logger.error('LiveQuery publisher error on shutdown', { error });
+    }
+  }
+
   onCloudCodeAfterSave(request: any): void {
     this._onCloudCodeMessage(Parse.applicationId + 'afterSave', request);
   }
@@ -29,10 +41,15 @@ class ParseCloudCodePublisher {
   }
 
   onClearCachedRoles(user: Parse.Object) {
-    this.parsePublisher.publish(
-      Parse.applicationId + 'clearCache',
-      JSON.stringify({ userId: user.id })
-    );
+    this._publish(Parse.applicationId + 'clearCache', JSON.stringify({ userId: user.id }));
+  }
+
+  // A Redis publisher rejects once it is closed, e.g. for an afterSave that completes during
+  // shutdown; the error is logged instead of becoming an unhandled rejection
+  _publish(channel: string, message: string): void {
+    Promise.resolve(this.parsePublisher.publish(channel, message)).catch(error => {
+      logger.error('LiveQuery publisher error', { error });
+    });
   }
 
   // Request is the request object from cloud code functions. request.object is a ParseObject.
@@ -52,7 +69,7 @@ class ParseCloudCodePublisher {
     if (request.classLevelPermissions) {
       message.classLevelPermissions = request.classLevelPermissions;
     }
-    this.parsePublisher.publish(type, JSON.stringify(message));
+    this._publish(type, JSON.stringify(message));
   }
 }
 

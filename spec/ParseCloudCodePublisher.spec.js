@@ -70,6 +70,54 @@ describe('ParseCloudCodePublisher', function () {
     expect(message.originalParseObject).toEqual(request.original._toFullJSON());
   });
 
+  it('logs an error if publishing fails', async () => {
+    const logger = require('../lib/logger').default;
+    const loggerErrorSpy = spyOn(logger, 'error');
+    const publisher = new ParseCloudCodePublisher({});
+    const error = new Error('The client is closed');
+    publisher.parsePublisher.publish.and.rejectWith(error);
+    publisher._onCloudCodeMessage('afterSave', { object: new Parse.Object('Test') });
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(loggerErrorSpy).toHaveBeenCalledWith('LiveQuery publisher error', { error });
+  });
+
+  it('can shutdown an open publisher', async () => {
+    const publisher = new ParseCloudCodePublisher({});
+    publisher.parsePublisher.isOpen = true;
+    publisher.parsePublisher.close = jasmine.createSpy('close').and.resolveTo();
+    await publisher.shutdown();
+
+    expect(publisher.parsePublisher.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not close a publisher that is not open', async () => {
+    const publisher = new ParseCloudCodePublisher({});
+    publisher.parsePublisher.isOpen = false;
+    publisher.parsePublisher.close = jasmine.createSpy('close').and.resolveTo();
+    await publisher.shutdown();
+
+    expect(publisher.parsePublisher.close).not.toHaveBeenCalled();
+  });
+
+  it('can shutdown a publisher without connection', async () => {
+    const publisher = new ParseCloudCodePublisher({});
+
+    await expectAsync(publisher.shutdown()).toBeResolved();
+  });
+
+  it('logs an error if the publisher fails to close', async () => {
+    const logger = require('../lib/logger').default;
+    const loggerErrorSpy = spyOn(logger, 'error');
+    const publisher = new ParseCloudCodePublisher({});
+    const error = new Error('close failed');
+    publisher.parsePublisher.isOpen = true;
+    publisher.parsePublisher.close = jasmine.createSpy('close').and.rejectWith(error);
+
+    await expectAsync(publisher.shutdown()).toBeResolved();
+    expect(loggerErrorSpy).toHaveBeenCalledWith('LiveQuery publisher error on shutdown', { error });
+  });
+
   afterEach(function () {
     jasmine.restoreLibrary('../lib/LiveQuery/ParsePubSub', 'ParsePubSub');
   });

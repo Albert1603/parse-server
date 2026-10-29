@@ -102,6 +102,25 @@ describe_only(() => {
       expect(cache.client.isOpen).toBe(false);
     }, 0);
   });
+
+  it('handleShutdown can be called more than once', async () => {
+    const logger = require('../lib/logger').default;
+    const loggerErrorSpy = spyOn(logger, 'error').and.callThrough();
+    await cache.handleShutdown();
+    await cache.handleShutdown();
+
+    expect(cache.client.isOpen).toBe(false);
+    expect(loggerErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it('handleShutdown does not close a client that is not connected', async () => {
+    const logger = require('../lib/logger').default;
+    const loggerErrorSpy = spyOn(logger, 'error').and.callThrough();
+    const notConnectedCache = new RedisCacheAdapter(null, 100);
+    await notConnectedCache.handleShutdown();
+
+    expect(loggerErrorSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe_only(() => {
